@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#172554">
+<title>Farm ERP — NFC прототип одного комплекту</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#172033;background:#f3f5f9}
+*{box-sizing:border-box}body{margin:0;padding:18px;max-width:850px;margin-inline:auto}
+h1{font-size:1.35rem;margin:0 0 6px}h2{font-size:1.05rem;margin:20px 0 10px}
+.sub{color:#5b6475;font-size:.92rem;margin:0 0 18px}
+.panel{background:#fff;border:1px solid #dce2ec;border-radius:14px;padding:15px;margin:12px 0}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button,select{font:inherit;border-radius:10px;border:1px solid #c8d1df;padding:11px 13px;background:#fff;color:#172033}
+button.primary{background:#1d4ed8;color:white;border-color:#1d4ed8}
+button:disabled{opacity:.45}
+select{min-width:190px;max-width:100%}
+label{display:block;font-weight:600;font-size:.9rem;margin:10px 0 6px}
+.status{padding:10px 12px;border-radius:10px;background:#eef2ff;color:#243b72;margin-top:10px;font-size:.92rem}
+.status.error{background:#fff1f2;color:#9f1239}.status.ok{background:#ecfdf5;color:#166534}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:9px}
+.metric{background:#f7f9fc;border:1px solid #e4e9f1;border-radius:10px;padding:10px}
+.metric b{display:block;font-size:1.25rem}
+.small{font-size:.83rem;color:#667085}
+.taglist{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:7px}
+.tag{padding:8px 10px;border:1px solid #e1e6ef;border-radius:9px;font-size:.88rem}
+.tag.done{background:#ecfdf5;border-color:#86efac}
+.tag code{font-size:.82rem}
+ul{padding-left:20px;margin:8px 0}li{margin:5px 0}
+#log{max-height:260px;overflow:auto;font-size:.88rem}
+.logitem{padding:7px 0;border-bottom:1px solid #edf0f5}
+.note{font-size:.85rem;color:#596579;line-height:1.45}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<h1>Farm ERP — NFC прототип одного комплекту</h1>
+<p class="sub">Тестовий комплект №17 · локальний прототип без запису в Google Sheets</p>
+
+<section class="panel">
+  <h2>1. Робоча ділянка</h2>
+  <label for="area">Оберіть ділянку перед початком сканування</label>
+  <select id="area">
+    <option value="Підготовка матриць">Підготовка матриць</option>
+    <option value="Фарбування">Фарбування</option>
+    <option value="Вакуумування">Вакуумування</option>
+    <option value="Склейка виробів">Склейка виробів</option>
+  </select>
+  <div class="row" style="margin-top:12px">
+    <button id="start" class="primary">Почати NFC-сканування</button>
+    <button id="stop">Зупинити</button>
+    <button id="demo">Демо: додати тестове сканування</button>
+  </div>
+  <div id="status" class="status">NFC ще не запущено. Потрібен Android + Chrome і сторінка, відкрита через HTTPS.</div>
+  <p class="note">Після натискання «Почати» тримайте мітки по черзі біля телефона. Сторінка має залишатися відкритою та активною. Якщо браузер не підтримує Web NFC, перевірте Chrome на Android і дозвіл NFC у телефоні.</p>
+</section>
+
+<section class="panel">
+  <h2>2. Комплектність склейки</h2>
+  <div class="grid" id="products"></div>
+  <p class="note">Для склейки сканується будь-яка одна половинка виробу. Для кіля після сканування потрібно вказати, що саме виготовили. Ліва матриця кіля дозволяє тільки стабілізатор; обидві праві можуть бути стабілізатором або рудером.</p>
+</section>
+
+<section class="panel">
+  <h2>3. Облік половинок у вибраній ділянці</h2>
+  <div class="grid" id="metrics"></div>
+  <div id="taglist" class="taglist" style="margin-top:12px"></div>
+</section>
+
+<section class="panel">
+  <h2>4. Останні операції</h2>
+  <div class="row">
+    <button id="undo">Скасувати останню операцію</button>
+    <button id="reset">Очистити тест комплекту</button>
+    <button id="export">Експортувати JSON</button>
+  </div>
+  <div id="log" style="margin-top:10px"></div>
+</section>
+
+<section class="panel">
+  <h2>5. Підготовка NFC-міток</h2>
+  <p class="note">Кожна мітка має містити NDEF-запис типу URL із адресою цієї сторінки та параметром <code>?tag=ІДЕНТИФІКАТОР</code>. Наприклад: <code>https://ВАШ-ДОМЕН/?tag=M017-FU-UP</code>. Усі 12 URL мають вести на ту саму сторінку, але мати різний параметр tag.</p>
+  <div class="taglist" id="ids"></div>
+  <p class="note">Для тесту можна спершу запрограмувати 2–3 мітки. Не використовуйте адресу-заглушку: спочатку розмістіть цей файл на HTTPS-хостингу, потім підставте його адресу в NFC Tools.</p>
+</section>
+
+<script>
+(() => {
+  "use strict";
+  const SET_NO = 17;
+  const STORAGE_KEY = "farm-erp-nfc-prototype-v1";
+  const parts = [
+    {id:"FU", name:"Фюзеляж", halves:["UP","LOW"], product:"Фюзеляж"},
+    {id:"WL", name:"Ліве крило", halves:["UP","LOW"], product:"Ліве крило"},
+    {id:"WR", name:"Праве крило", halves:["UP","LOW"], product:"Праве крило"},
+    {id:"KL-L", name:"Кіль — ліва матриця", halves:["UP","LOW"], keel:"left"},
+    {id:"KL-R1", name:"Кіль — права матриця №1", halves:["UP","LOW"], keel:"right"},
+    {id:"KL-R2", name:"Кіль — права матриця №2", halves:["UP","LOW"], keel:"right"}
+  ];
+  const allTags = parts.flatMap(p => p.halves.map(h => ({
+    id:`M${String(SET_NO).padStart(3,"0")}-${p.id}-${h}`,
+    part:p, half:h
+  })));
+  const $ = id => document.getElementById(id);
+  let events = [];
+  let reader = null;
+  let scanning = false;
+
+  function load(){ try { events = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { events=[]; } }
+  function save(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(events)); render(); }
+  function area(){ return $("area").value; }
+  function tagLabel(t){ return `${t.part.name} — ${t.half==="UP"?"верхня":"нижня"} половинка`; }
+  function currentAreaEvents(){ return events.filter(e=>e.area===area()); }
+  function scannedIds(){ return new Set(currentAreaEvents().filter(e=>e.kind==="half").map(e=>e.tagId)); }
+  function glueProducts(){ return currentAreaEvents().filter(e=>e.kind==="glue"); }
+  function glueCounts(){
+    const counts={"Фюзеляж":0,"Ліве крило":0,"Праве крило":0,"Стабілізатор №1":0,"Стабілізатор №2":0,"Рудер":0};
+    glueProducts().forEach(e=>counts[e.product]=(counts[e.product]||0)+1);
+    return counts;
+  }
+  function completeSet(){
+    const c=glueCounts();
+    return c["Фюзеляж"]===1 && c["Ліве крило"]===1 && c["Праве крило"]===1 &&
+      c["Стабілізатор №1"]===1 && c["Стабілізатор №2"]===1 && c["Рудер"]===1;
+  }
+  function setStatus(msg,type=""){ $("status").className="status "+type; $("status").textContent=msg; }
+  function findTag(id){ return allTags.find(t=>t.id===id); }
+
+  function addScan(id, chosenProduct=null){
+    const t=findTag(id);
+    if(!t){ setStatus(`Невідома мітка: ${id}. Для прототипу дозволені тільки 12 міток комплекту №17.`,"error"); return; }
+    if(area()!=="Склейка виробів"){
+      if(scannedIds().has(id)){ setStatus(`Повторне сканування не зараховано: ${tagLabel(t)} вже є в ділянці «${area()}».`,"error"); return; }
+      events.push({kind:"half",tagId:id,area:area(),label:tagLabel(t),time:new Date().toISOString()});
+      save(); setStatus(`Зараховано: ${tagLabel(t)} · ${area()}.`,"ok"); return;
+    }
+    let product=t.part.product;
+    if(t.part.keel){
+      if(!chosenProduct){
+        const options=t.part.keel==="left"?["Стабілізатор №1","Стабілізатор №2"]:["Стабілізатор №1","Стабілізатор №2","Рудер"];
+        showKeelChoice(t,options); return;
+      }
+      product=chosenProduct;
+    }
+    const c=glueCounts();
+    const sameMatrixAlreadyUsed=glueProducts().some(e=>e.matrixId===t.part.id);
+    if(sameMatrixAlreadyUsed){
+      setStatus(`Матриця ${t.part.name} уже використана для склейки в комплекті №${SET_NO}. Сканування другої половинки не створює ще один виріб.`,"error");
+      return;
+    }
+    if(c[product]>=1){ setStatus(`Ліміт для «${product}» у комплекті №${SET_NO} вже досягнуто. Повтор не зараховано.`,"error"); return; }
+    events.push({kind:"glue",tagId:id,matrixId:t.part.id,area:area(),label:tagLabel(t),product,time:new Date().toISOString()});
+    save(); setStatus(`Склейку записано: ${product}. Джерело: ${tagLabel(t)}.`,"ok");
+  }
+
+  function showKeelChoice(t,options){
+    const old=$("keelChoice"); if(old) old.remove();
+    const box=document.createElement("div"); box.id="keelChoice"; box.className="status";
+    const title=document.createElement("div"); title.textContent=`Відскановано ${tagLabel(t)}. Що саме склеєно?`; box.append(title);
+    const sel=document.createElement("select"); sel.style.margin="10px 8px 0 0";
+    options.forEach(v=>{const o=document.createElement("option");o.value=v;o.textContent=v;sel.append(o);});
+    const btn=document.createElement("button");btn.className="primary";btn.textContent="Підтвердити";
+    btn.onclick=()=>{box.remove();addScan(t.id,sel.value);};
+    box.append(sel,btn); $("status").after(box);
+  }
+
+  function render(){
+    const c=glueCounts();
+    $("products").innerHTML=Object.entries(c).map(([n,v])=>`<div class="metric"><span>${n}</span><b>${v}/1</b><span class="small">${v===1?"Зараховано":"Очікується"}</span></div>`).join("")+
+      `<div class="metric"><span>Комплект склеєно повністю</span><b>${completeSet()?"Так":"Ні"}</b><span class="small">Потрібні всі 6 готових виробів</span></div>`;
+    const halfEvents=currentAreaEvents().filter(e=>e.kind==="half");
+    const glueEvents=currentAreaEvents().filter(e=>e.kind==="glue");
+    const physicalScans=new Set(currentAreaEvents().map(e=>e.tagId)).size;
+    $("metrics").innerHTML=`<div class="metric"><span>Відскановано фізичних половинок у цій ділянці</span><b>${physicalScans}</b></div>
+      <div class="metric"><span>Зареєстровано склейок у цій ділянці</span><b>${glueEvents.length}</b></div>
+      <div class="metric"><span>Повністю склеєний комплект</span><b>${completeSet()?"1":"0"}</b></div>`;
+    const done=scannedIds();
+    $("taglist").innerHTML=allTags.map(t=>`<div class="tag ${done.has(t.id)?"done":""}"><code>${t.id}</code><br>${tagLabel(t)} ${done.has(t.id)?"✓":""}</div>`).join("");
+    $("log").innerHTML=events.slice().reverse().slice(0,40).map(e=>`<div class="logitem"><b>${e.area}</b> · ${e.kind==="glue"?"Склейка: "+e.product:e.label}<br><span class="small">${new Date(e.time).toLocaleString("uk-UA")} · ${e.tagId}</span></div>`).join("")||"<span class='small'>Операцій ще немає.</span>";
+    $("ids").innerHTML=allTags.map(t=>`<div class="tag"><code>${t.id}</code><br>${tagLabel(t)}</div>`).join("");
+  }
+
+  async function startScan(){
+    if(!("NDEFReader" in window)){setStatus("Цей браузер не підтримує Web NFC. Відкрийте сторінку в Chrome на Android через HTTPS.","error");return;}
+    try{
+      reader=new NDEFReader();
+      await reader.scan();
+      scanning=true;
+      setStatus("Сканування активне. Підносьте NFC-мітки по черзі, не закриваючи сторінку.","ok");
+      reader.onreading=event=>{
+        if(!scanning) return;
+        let id=null;
+        for(const record of event.message.records){
+          try{
+            if(record.recordType==="url"){
+              const url=new URL(new TextDecoder().decode(record.data));
+              id=url.searchParams.get("tag");
+            } else if(record.recordType==="text"){
+              const textData=new TextDecoder(record.encoding||"utf-8").decode(record.data).trim();
+              id=textData.startsWith("M")?textData:null;
+            }
+          }catch{}
+        }
+        if(id) addScan(id);
+        else setStatus("Мітку прочитано, але в NDEF не знайдено параметр tag або текстовий ID.","error");
+      };
+      reader.onreadingerror=()=>setStatus("Не вдалося прочитати мітку. Спробуйте прикласти її ще раз.","error");
+    }catch(err){
+      setStatus(`Не вдалося запустити NFC: ${err.name||"помилка"} — ${err.message||""}`,"error");
+    }
+  }
+  $("start").onclick=startScan;
+  $("stop").onclick=()=>{scanning=false;reader=null;setStatus("Сканування зупинено. Записи збережені на цьому пристрої.");};
+  $("area").onchange=()=>{const old=$("keelChoice");if(old)old.remove();render();setStatus(`Вибрана ділянка: ${area()}.`);};
+  $("undo").onclick=()=>{if(!events.length){setStatus("Немає операцій для скасування.");return;}const e=events.pop();save();setStatus(`Скасовано останню операцію: ${e.tagId} · ${e.area}.`,"ok");};
+  $("reset").onclick=()=>{if(confirm("Видалити всі тестові записи цього прототипу на цьому пристрої?")){events=[];save();setStatus("Тестовий комплект очищено.");}};
+  $("export").onclick=()=>{const blob=new Blob([JSON.stringify({setNo:SET_NO,events},null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`farm-erp-nfc-set-${SET_NO}.json`;a.click();URL.revokeObjectURL(a.href);};
+  $("demo").onclick=()=>{
+    const missing=allTags.find(t=>!scannedIds().has(t.id));
+    if(area()==="Склейка виробів"){
+      const t=allTags.find(t=>t.part.id==="FU");
+      if(t)addScan(t.id);
+    } else if(missing) addScan(missing.id);
+    else setStatus("Усі 12 половинок уже відскановані в цій ділянці.");
+  };
+  load();render();
+})();
+</script>
+</body>
+</html>
